@@ -128,6 +128,31 @@ Reproducer: `bugs/descriptor-multi-array/repro.cpp`. This matters for any
 SSBO layout that groups unrelated arrays in one struct (e.g. coordinates and
 payload ids per bucket); splitting them into separate buffers avoids it.
 
+### Investigation notes (attempted fix, not sufficient)
+
+The pointer type carries `is_reference`, and the checker only rejects
+*non-reference* pointers in non-physical spaces, so this looked like a missing
+initialiser. Three sites were patched to derive it from the arena's address
+space table:
+
+* `l2s_type.c` — `LLVMPointerTypeKind` conversion;
+* `l2s_instr.c` — `add_pointee_to_ptr_t`;
+* `shady/passes/ptr/lower_generic_ptrs.c` — the generic-pointer lowering, which
+  reconstructs a concrete pointer from a tag with
+  `.address_space = get_addr_space_from_tag(tag)`.
+
+None of them fixed the reproducer, which suggests the mismatch is between the
+arena used by the frontend and the one used by the later verification:
+`shady/config.c` defaults **every** address space to `physical = true`, while
+the SPIR-V target marks descriptor spaces non-physical. A typed pointer created
+while `physical` is still true then fails verification after the switch.
+
+A proper fix therefore needs the address-space model to be consistent across
+arenas (or the frontend to consult the target's table), and an audit of the
+generic-pointer passes, which assume that a generic pointer can be encoded as
+an integer tag — meaningless for descriptor pointers. That is a design change,
+not a one-liner.
+
 ---
 
 ## C. Push-constant member order is compiler-chosen and unstable
