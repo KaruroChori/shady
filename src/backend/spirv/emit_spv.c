@@ -178,7 +178,24 @@ SpvId spv_emit_decl(Emitter* emitter, const Node* decl) {
             if (gvar->init)
                 init = spv_emit_value(emitter, NULL, gvar->init);
             SpvStorageClass storage_class = spv_emit_addr_space(emitter, gvar->address_space);
-            spvb_global_variable(emitter->file_builder, given_id, spv_emit_type(emitter, decl->type), storage_class, false, init);
+            SpvId global_type = spv_emit_type(emitter, decl->type);
+            // Vulkan requires descriptor-backed variables (SSBO/UBO) to be typed as a
+            // Block-decorated struct. The front-end only sets that flag for entry-point
+            // argument blocks, so globals were emitted without it and rejected by
+            // spirv-val (VUID-StandaloneSpirv-Uniform-06807).
+            if (storage_class == SpvStorageClassStorageBuffer || storage_class == SpvStorageClassUniform) {
+                // decl->type is the pointer type; the Block decoration belongs on the pointee.
+                const Type* pointee = shd_get_unqualified_type(decl->type);
+                if (pointee->tag == PtrType_TAG) pointee = pointee->payload.ptr_type.pointed_type;
+                if (pointee->tag == StructType_TAG && !(pointee->payload.struct_type.flags & ShdStructFlagBlock)) {
+                    SpvId pointee_id = spv_emit_type(emitter, pointee);
+                    spvb_decorate(emitter->file_builder, pointee_id, SpvDecorationBlock, 0, NULL);
+                    // Latch the flag so a repeated emission of the same declaration
+                    // does not decorate it twice (duplicate Block is invalid).
+                    ((Node*) pointee)->payload.struct_type.flags |= ShdStructFlagBlock;
+                }
+            }
+            spvb_global_variable(emitter->file_builder, given_id, global_type, storage_class, false, init);
             spv_emit_aliased_restrict(emitter, given_id, decl->type);
 
             bool is_descriptor_binding = false;
