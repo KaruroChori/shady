@@ -105,6 +105,31 @@ Two observations that matter for prioritisation:
 
 ---
 
+## D. Accessing a second array member of a descriptor struct is rejected
+
+```c
+struct Bucket { float coords[3][16]; unsigned ids[16]; };
+struct Buckets { Bucket v[4]; };
+__attribute__((address_space(394))) Buckets g;
+```
+
+Indexing `g.v[i].coords[d][k]` alone compiles. Adding any access to
+`g.v[i].ids[k]` fails with:
+
+```
+Address space ShaderStorageBufferObject is not physical in this arena
+```
+
+The check is `_shd_check_type_ptr_type` in `src/shady/check.c`: a
+non-reference pointer value in a non-physical address space is rejected. The
+front-end evidently materialises a pointer value for the second array member.
+
+Reproducer: `bugs/descriptor-multi-array/repro.cpp`. This matters for any
+SSBO layout that groups unrelated arrays in one struct (e.g. coordinates and
+payload ids per bucket); splitting them into separate buffers avoids it.
+
+---
+
 ## C. Push-constant member order is compiler-chosen and unstable
 
 For a shader that reads six device pointers declared as globals, the
